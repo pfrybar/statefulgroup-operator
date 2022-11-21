@@ -44,6 +44,7 @@ type StatefulGroupStatus struct {
 }
 
 //+kubebuilder:object:root=true
+//+kubebuilder:resource:shortName=stg
 //+kubebuilder:subresource:status
 //+kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas
 //+kubebuilder:printcolumn:name="Wanted",type=integer,JSONPath=`.spec.replicas`

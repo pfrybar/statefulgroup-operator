@@ -12,6 +12,8 @@ spec:
     kind: StatefulGroup
     listKind: StatefulGroupList
     plural: statefulgroups
+    shortNames:
+    - stg
     singular: statefulgroup
   scope: Namespaced
   versions:
