@@ -1,0 +1,24 @@
+# permissions for end users to edit statefulgroups.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: statefulgroup-editor-role
+rules:
+- apiGroups:
+  - pfrybarger.com
+  resources:
+  - statefulgroups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - pfrybarger.com
+  resources:
+  - statefulgroups/status
+  verbs:
+  - get

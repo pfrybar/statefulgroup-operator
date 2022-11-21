@@ -1,0 +1,37 @@
+apiVersion: pfrybarger.com/v1alpha1
+kind: StatefulGroup
+metadata:
+  name: nginx-group
+spec:
+  replicas: 4
+  selectorLabelKey: app
+  serviceTemplate:
+    ports:
+    - port: 80
+      name: web
+    clusterIP: None
+  statefulSetTemplate:
+    serviceName: dummy  # will be overridden
+    replicas: 2
+    selector:
+      matchLabels:
+        app: dummy  # will be overridden
+    template:
+      spec:
+        containers:
+        - name: nginx
+          image: registry.k8s.io/nginx-slim:0.8
+          ports:
+          - containerPort: 80
+            name: web
+          volumeMounts:
+          - name: www
+            mountPath: /usr/share/nginx/html
+    volumeClaimTemplates:
+    - metadata:
+        name: www
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 1Gi

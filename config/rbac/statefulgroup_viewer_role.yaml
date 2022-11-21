@@ -1,0 +1,20 @@
+# permissions for end users to view statefulgroups.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: statefulgroup-viewer-role
+rules:
+- apiGroups:
+  - pfrybarger.com
+  resources:
+  - statefulgroups
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pfrybarger.com
+  resources:
+  - statefulgroups/status
+  verbs:
+  - get
