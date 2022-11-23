@@ -120,8 +120,8 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	toUpdate := []StatefulGroupItem{}
 	toDelete := []StatefulGroupItem{}
 
-	numWanted := int(*statefulGroup.Spec.Replicas)
-	for i := 0; i < numWanted; i++ {
+	replicasWanted := int(*statefulGroup.Spec.Replicas)
+	for i := 0; i < replicasWanted; i++ {
 		name := fmt.Sprintf("%s-%d", statefulGroup.Name, i)
 
 		if item, ok := items[name]; ok {
