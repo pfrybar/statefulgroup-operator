@@ -142,18 +142,17 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					}
 				}
 
-				// note: the ordering of arguments to 'DeepDerivative' are important
 				var updatedService *corev1.Service
-				if !equality.Semantic.DeepDerivative(serviceSpec, &existingItem.Service.Spec) {
+				if hasServiceSpecChanged(serviceSpec, &existingItem.Service.Spec) {
 					updatedService = existingItem.Service.DeepCopy()
 					updatedService.Spec = *serviceSpec
 				}
 
-				// note: the ordering of arguments to 'DeepDerivative' are important
 				var updatedStatefulSet *appsv1.StatefulSet
-				if !equality.Semantic.DeepDerivative(statefulSetSpec, &existingItem.StatefulSet.Spec) {
+				if hasStatefulSetSpecChanged(statefulSetSpec, &existingItem.StatefulSet.Spec) {
 					updatedStatefulSet = existingItem.StatefulSet.DeepCopy()
 					updatedStatefulSet.Spec = *statefulSetSpec
+
 				}
 
 				if updatedService != nil || updatedStatefulSet != nil {
@@ -366,6 +365,34 @@ func createStatefulSet(name string, statefulGroup commonv1alpha1.StatefulGroup) 
 		},
 		Spec: *createStatefulSetSpec(name, statefulGroup),
 	}
+}
+
+func hasServiceSpecChanged(newSpec *corev1.ServiceSpec, currentSpec *corev1.ServiceSpec) bool {
+	currentSpecCopy := currentSpec.DeepCopy()
+
+	// work around since 'DeepDerivative' doesn't handle missing ints (which default to 0)
+	for i, port := range newSpec.Ports {
+		if port.TargetPort.IntVal == 0 && port.TargetPort.StrVal == "" {
+			currentPort := currentSpecCopy.Ports[i]
+			currentPort.TargetPort = intstr.IntOrString{}
+			currentSpecCopy.Ports[i] = currentPort
+		}
+
+		if port.NodePort == 0 {
+			currentPort := currentSpecCopy.Ports[i]
+			currentPort.NodePort = 0
+			currentSpecCopy.Ports[i] = currentPort
+		}
+	}
+
+	// note: there are probably more fields that need to be manually checked
+
+	return !equality.Semantic.DeepDerivative(newSpec, currentSpecCopy)
+}
+
+func hasStatefulSetSpecChanged(newSpec *appsv1.StatefulSetSpec, currentSpec *appsv1.StatefulSetSpec) bool {
+	// note: the ordering of arguments to 'DeepDerivative' are important
+	return !equality.Semantic.DeepDerivative(newSpec, currentSpec)
 }
 
 // SetupWithManager sets up the controller with the Manager.
