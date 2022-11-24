@@ -256,14 +256,18 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		for _, item := range toDelete {
 			log.Info("Deleting item", "name", item.Name)
 
-			if err := r.Delete(ctx, item.Service); err != nil {
-				log.Error(err, "Unable to delete Service", "name", item.Name)
-				return ctrl.Result{}, err
+			if item.Service != nil {
+				if err := r.Delete(ctx, item.Service); err != nil {
+					log.Error(err, "Unable to delete Service", "name", item.Name)
+					return ctrl.Result{}, err
+				}
 			}
 
-			if err := r.Delete(ctx, item.StatefulSet); err != nil {
-				log.Error(err, "Unable to delete StatefulSet", "name", item.Name)
-				return ctrl.Result{}, err
+			if item.StatefulSet != nil {
+				if err := r.Delete(ctx, item.StatefulSet); err != nil {
+					log.Error(err, "Unable to delete StatefulSet", "name", item.Name)
+					return ctrl.Result{}, err
+				}
 			}
 		}
 	}
