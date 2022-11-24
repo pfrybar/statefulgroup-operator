@@ -118,13 +118,17 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 
 			if existingItem.Service == nil {
-				// service has been deleted, recreate
-				// TODO: implement
-				log.Info("Service has been deleted, need to recreate", "name", name)
+				log.Info("Service has been deleted, will recreate", "name", name)
+				toCreate = append(toCreate, StatefulGroupItem{
+					Name:    name,
+					Service: createService(name, statefulGroup),
+				})
 			} else if existingItem.StatefulSet == nil {
-				// stateful set has been deleted, recreate
-				// TODO: implement
-				log.Info("StatefulSet has been deleted, need to recreate", "name", name)
+				log.Info("StatefulSet has been deleted, will recreate", "name", name)
+				toCreate = append(toCreate, StatefulGroupItem{
+					Name:        name,
+					StatefulSet: createStatefulSet(name, statefulGroup),
+				})
 			} else {
 				serviceSpec := createServiceSpec(name, statefulGroup)
 				statefulSetSpec := createStatefulSetSpec(name, statefulGroup)
