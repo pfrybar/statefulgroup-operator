@@ -216,12 +216,19 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		for _, item := range toUpdate {
 			log.Info("Updating item", "name", item.Name)
 
-			// TODO: compare specs to see if anything actually changed
+			itemChanged := false
+			oldItem := existingItems[item.Name]
 
 			if item.Service != nil {
 				if err := r.Update(ctx, item.Service); err != nil {
 					log.Error(err, "Unable to update Service", "name", item.Name)
 					return ctrl.Result{}, err
+				}
+
+				if equality.Semantic.DeepEqual(item.Service.Spec, oldItem.Service.Spec) {
+					log.Info("Warning: no change was detected to the service - this could indicate an issue with the spec comparison code (DeepDerivative)")
+				} else {
+					itemChanged = true
 				}
 			}
 
@@ -230,9 +237,17 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					log.Error(err, "Unable to update StatefulSet", "name", item.Name)
 					return ctrl.Result{}, err
 				}
+
+				if equality.Semantic.DeepEqual(item.StatefulSet.Spec, oldItem.StatefulSet.Spec) {
+					log.Info("Warning: no change was detected to the stateful set - this could indicate an issue with the spec comparison code (DeepDerivative)")
+				} else {
+					itemChanged = true
+				}
 			}
 
-			break
+			if itemChanged {
+				break
+			}
 		}
 	}
 
