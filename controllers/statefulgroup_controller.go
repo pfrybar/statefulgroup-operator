@@ -41,6 +41,12 @@ type StatefulGroupReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+type StatefulGroupItem struct {
+	Name        string
+	Service     *corev1.Service
+	StatefulSet *appsv1.StatefulSet
+}
+
 //+kubebuilder:rbac:groups=pfrybarger.com,resources=statefulgroups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=pfrybarger.com,resources=statefulgroups/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=pfrybarger.com,resources=statefulgroups/finalizers,verbs=update
@@ -90,33 +96,13 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// correlate the services + stateful sets
-	items := map[string]StatefulGroupItem{}
-	for _, service := range serviceList.Items {
-		items[service.Name] = StatefulGroupItem{
-			Name:    service.Name,
-			Service: service.DeepCopy(),
-		}
-	}
+	existingItems := buildStatefulGroupItemMap(serviceList, statefulSetList)
+	itemsToDelete := buildStatefulGroupItemMap(serviceList, statefulSetList)
 
-	for _, statefulSet := range statefulSetList.Items {
-		// small chance the stateful set doesn't exist (error condition)
-		if item, ok := items[statefulSet.Name]; ok {
-			item.StatefulSet = statefulSet.DeepCopy()
-			items[statefulSet.Name] = item
-		} else {
-			items[statefulSet.Name] = StatefulGroupItem{
-				Name:        statefulSet.Name,
-				StatefulSet: statefulSet.DeepCopy(),
-			}
-		}
-	}
-
-	ready := []StatefulGroupItem{}
-	notReady := []StatefulGroupItem{}
+	itemsReady := int32(0)
+	itemsNotReady := int32(0)
 
 	toCreate := []StatefulGroupItem{}
-	toFix := []StatefulGroupItem{}
 	toUpdate := []StatefulGroupItem{}
 	toDelete := []StatefulGroupItem{}
 
@@ -124,18 +110,22 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	for i := 0; i < replicasWanted; i++ {
 		name := fmt.Sprintf("%s-%d", statefulGroup.Name, i)
 
-		if item, ok := items[name]; ok {
-			if groupIsReady(&item) {
-				ready = append(ready, item)
+		if existingItem, ok := existingItems[name]; ok {
+			if groupItemIsReady(existingItem) {
+				itemsReady++
 			} else {
-				notReady = append(notReady, item)
+				itemsNotReady++
 			}
 
-			if item.Service == nil || item.StatefulSet == nil {
-				toFix = append(toFix, item)
+			if existingItem.Service == nil {
+				// service has been deleted, recreate
+				// TODO: implement
+				log.Info("Service has been deleted, need to recreate", "name", name)
+			} else if existingItem.StatefulSet == nil {
+				// stateful set has been deleted, recreate
+				// TODO: implement
+				log.Info("StatefulSet has been deleted, need to recreate", "name", name)
 			} else {
-				update := false
-
 				serviceSpec := createServiceSpec(name, statefulGroup)
 				statefulSetSpec := createStatefulSetSpec(name, statefulGroup)
 
@@ -149,81 +139,93 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				}
 
 				// note: the ordering of arguments to 'DeepDerivative' are important
-				if !equality.Semantic.DeepDerivative(serviceSpec, &item.Service.Spec) {
-					item.Service.Spec = *serviceSpec
-					update = true
+				var updatedService *corev1.Service
+				if !equality.Semantic.DeepDerivative(serviceSpec, &existingItem.Service.Spec) {
+					updatedService = existingItem.Service.DeepCopy()
+					updatedService.Spec = *serviceSpec
 				}
 
 				// note: the ordering of arguments to 'DeepDerivative' are important
-				if !equality.Semantic.DeepDerivative(statefulSetSpec, &item.StatefulSet.Spec) {
-					item.StatefulSet.Spec = *statefulSetSpec
-					update = true
+				var updatedStatefulSet *appsv1.StatefulSet
+				if !equality.Semantic.DeepDerivative(statefulSetSpec, &existingItem.StatefulSet.Spec) {
+					updatedStatefulSet = existingItem.StatefulSet.DeepCopy()
+					updatedStatefulSet.Spec = *statefulSetSpec
 				}
 
-				if update {
-					toUpdate = append(toUpdate, item)
+				if updatedService != nil || updatedStatefulSet != nil {
+					toUpdate = append(toUpdate, StatefulGroupItem{
+						Name:        name,
+						Service:     updatedService,
+						StatefulSet: updatedStatefulSet,
+					})
 				}
 			}
 
 			// remove the item so we can track the ones which need to be deleted
-			delete(items, name)
+			delete(itemsToDelete, name)
 		} else {
-			item := StatefulGroupItem{
+			toCreate = append(toCreate, StatefulGroupItem{
 				Name:        name,
 				Service:     createService(name, statefulGroup),
 				StatefulSet: createStatefulSet(name, statefulGroup),
-			}
-
-			toCreate = append(toCreate, item)
+			})
 		}
 	}
 
 	// anything remaining should be deleted
-	for _, item := range items {
+	for _, item := range itemsToDelete {
 		toDelete = append(toDelete, item)
 	}
-
-	// TODO: deal with 'toFix' items
 
 	// always create everything at once, no matter the state
 	for _, item := range toCreate {
 		log.Info("Creating item", "name", item.Name)
 
-		if err := ctrl.SetControllerReference(&statefulGroup, item.Service, r.Scheme); err != nil {
-			log.Error(err, "Unable to set ownership")
-			return ctrl.Result{}, err
+		if item.Service != nil {
+			if err := ctrl.SetControllerReference(&statefulGroup, item.Service, r.Scheme); err != nil {
+				log.Error(err, "Unable to set ownership")
+				return ctrl.Result{}, err
+			}
+
+			if err := r.Create(ctx, item.Service); err != nil {
+				log.Error(err, "Unable to create Service", "name", item.Name)
+				return ctrl.Result{}, err
+			}
 		}
 
-		if err := r.Create(ctx, item.Service); err != nil {
-			log.Error(err, "Unable to create Service", "name", item.Name)
-			return ctrl.Result{}, err
-		}
+		if item.StatefulSet != nil {
+			if err := ctrl.SetControllerReference(&statefulGroup, item.StatefulSet, r.Scheme); err != nil {
+				log.Error(err, "Unable to set ownership")
+				return ctrl.Result{}, err
+			}
 
-		if err := ctrl.SetControllerReference(&statefulGroup, item.StatefulSet, r.Scheme); err != nil {
-			log.Error(err, "Unable to set ownership")
-			return ctrl.Result{}, err
-		}
-
-		if err := r.Create(ctx, item.StatefulSet); err != nil {
-			log.Error(err, "Unable to create StatefulSet", "name", item.Name)
-			return ctrl.Result{}, err
+			if err := r.Create(ctx, item.StatefulSet); err != nil {
+				log.Error(err, "Unable to create StatefulSet", "name", item.Name)
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
 	// only update (or continue updating) if everything is 'ready'
 	// TODO: this can be changed later on to allow parallel updates (e.g. 2 at a time)
-	if len(notReady) == 0 {
+	if itemsNotReady == 0 {
 		for _, item := range toUpdate {
 			log.Info("Updating item", "name", item.Name)
 
-			if err := r.Update(ctx, item.Service); err != nil {
-				log.Error(err, "Unable to update Service", "name", item.Name)
-				return ctrl.Result{}, err
+			// TODO: compare specs to see if anything actually changed
+
+			if item.Service != nil {
+				if err := r.Update(ctx, item.Service); err != nil {
+					log.Error(err, "Unable to update Service", "name", item.Name)
+					return ctrl.Result{}, err
+				}
 			}
 
-			if err := r.Update(ctx, item.StatefulSet); err != nil {
-				log.Error(err, "Unable to update StatefulSet", "name", item.Name)
-				return ctrl.Result{}, err
+			if item.StatefulSet != nil {
+				if err := r.Update(ctx, item.StatefulSet); err != nil {
+					log.Error(err, "Unable to update StatefulSet", "name", item.Name)
+					return ctrl.Result{}, err
+				}
 			}
 
 			break
@@ -231,7 +233,7 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// only delete if nothing else is being done
-	if len(notReady) == 0 && len(toCreate) == 0 && len(toUpdate) == 0 {
+	if itemsNotReady == 0 && len(toCreate) == 0 && len(toUpdate) == 0 {
 		for _, item := range toDelete {
 			log.Info("Deleting item", "name", item.Name)
 
@@ -247,8 +249,7 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	replicas := int32(len(ready))
-	statefulGroup.Status.Replicas = &replicas
+	statefulGroup.Status.Replicas = &itemsReady
 
 	if err := r.Status().Update(ctx, &statefulGroup); err != nil {
 		log.Error(err, "Unable to update status")
@@ -258,13 +259,34 @@ func (r *StatefulGroupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, nil
 }
 
-type StatefulGroupItem struct {
-	Name        string
-	Service     *corev1.Service
-	StatefulSet *appsv1.StatefulSet
+func buildStatefulGroupItemMap(serviceList corev1.ServiceList, statefulSetList appsv1.StatefulSetList) map[string]StatefulGroupItem {
+	items := map[string]StatefulGroupItem{}
+
+	for _, service := range serviceList.Items {
+		serviceCopy := service
+		items[service.Name] = StatefulGroupItem{
+			Name:    service.Name,
+			Service: &serviceCopy,
+		}
+	}
+
+	for _, statefulSet := range statefulSetList.Items {
+		statefulSetCopy := statefulSet
+		item, itemFound := items[statefulSet.Name]
+
+		// small chance the stateful set doesn't exist (error condition)
+		if !itemFound {
+			item = StatefulGroupItem{Name: statefulSet.Name}
+		}
+
+		item.StatefulSet = &statefulSetCopy
+		items[statefulSet.Name] = item
+	}
+
+	return items
 }
 
-func groupIsReady(item *StatefulGroupItem) bool {
+func groupItemIsReady(item StatefulGroupItem) bool {
 	// it's difficult to determine if a service is ready, assume it's ready if it's been created
 	// if the observed generation of a stateful set is different, then it hasn't reacted to spec changes yet
 	return item.Service != nil &&
